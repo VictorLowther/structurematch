@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = 'structurematch'
-  s.version     = '0.1.0'
+  s.version     = '0.1.1'
   s.date        = '2014-08-25'
   s.summary     = "Perform structural matching on JSON datastructures"
   s.description = "A library for ferforming structural and semantic matching on JSON"

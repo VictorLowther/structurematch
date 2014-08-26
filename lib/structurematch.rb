@@ -8,24 +8,31 @@
 class StructureMatch
 
   # Comparator handles the actual comparison operations that StructureMatch uses.
-  # Comparators are initialized using a hash with the following structure:
-  #
-  #  {
-  #    "op" => "operation"
-  #    "match" => "The value that the operation should work with"
-  #  }
-  #
-  # Comparator knows about the following tests:
-  #  "==","!=",">","<",">=","<=" --> The matching tests from Comparable.
-  #  "and" --> Returns true if all the submatches return true, false otherwise.
-  #  "or" --> Returns true if one of the submatches trturn true, false otherwise.
-  #    "and" and "or" require that "match" be an array of hashes that Comparator.new can process.
-  #  "not" --> Inverts its submatch.  Requires that "match" be a hash that Comparator.new can process.
-  #  "range" --> Tests to see if a value is within a range of values.
-  #     Requires that "match" be a two-element array whose elements can be used to construct a Range.
-  #  "regex" --> Tests to see if a value matches a regular expression.  "match" must be a regex.
-  #  "member" --> Tests to see if a value is within an array.  "match" must be the array.
   class Comparator
+    # Comparators are initialized using a hash with the following structure:
+    #
+    #  {
+    #    "op" => "operation"
+    #    "match" => "The value that the operation should work with"
+    #    # Optional, defaults to 1 or the length of the matched thing (if array-ish)
+    #    "score" => 1 # The score adjustment a match here gives.
+    #  }
+    #
+    # Comparator knows about the following tests:
+    #
+    # "==","!=",">","<",">=","<=":: The matching tests from Comparable.
+    # "and":: Returns true if all the submatches return true, false otherwise.
+    # "or":: Returns true if one of the submatches return true, false otherwise.
+    #        "and" and "or" require that "match" be an array of hashes that Comparator.new can process.
+    # "not":: Inverts its submatch.  Requires that "match" be a hash that Comparator.new can process.
+    # "range":: Tests to see if a value is within a range of values.
+    #           Requires that "match" be a two-element array whose elements can be used to construct a Range.
+    # "regex":: Tests to see if a value matches a regular expression.  "match" must be a regex.
+    #           The score on a matching regex will be the length of the MatchData by default, and the returned
+    #           value will be matching MatchData.
+    # "member":: Tests to see if a value is within an array.  "match" must be the array.
+    #            If an array is passed to a member test, then scoring and the returned value will be the
+    #            set intersection of the match array and the tested array.
     def initialize(op)
       raise "#{op.inspect} must be a Hash" unless op.kind_of?(Hash)
       unless ["==","!=",">","<",">=","<=","and","or","not","range","regex","member"].member?(op["op"])
@@ -34,6 +41,8 @@ class StructureMatch
       raise "#{op.inspect} must have a match key" unless op.has_key?("match")
       @op = op["op"].dup.freeze
       @match = op["match"]
+      @score = op["score"].to_i
+      @score = nil if @score == 0
       case @op
       when "and","or"
         raise "#{op.inspect} match key must be an array of submatches" unless @match.kind_of?(Array)
@@ -47,13 +56,14 @@ class StructureMatch
       end
     end
 
-    # test tests to see if v matches @match.
+    # Takes a single argument which is the value to be tested.
+    #
     # It returns a two-element array:
     #   [score,val]
-    #   score is the score adjustment factor for this test
-    #   val is the value that test returns.  It is usually the value that was passed in,
-    #      except for regular expressions (which return the MatchData) and array & array
-    #      comparisons performed by member (which returns the set intersection of the arrays)
+    # score:: the score adjustment factor for this test
+    # val:: the value that test returns.  It is usually the value that was passed in,
+    #       except for regular expressions (which return the MatchData) and array & array
+    #       comparisons performed by member (which returns the set intersection of the arrays)
     def test(v=true)
       case @op
       when "and" then [_t(@match.all?{|m|m.test(v)[0]}),v]
@@ -62,11 +72,11 @@ class StructureMatch
       when "range" then [_t(@match === v),v]
       when "regex"
         r = @match.match(v)
-        [r.nil? ? -1 : r.length, r]
+        [r.nil? ? -1 : @score || r.length, r]
       when "member"
         if v.kind_of?(Array)
           r = @match & v
-          [r.empty? ? -1 : r.length, r]
+          [r.empty? ? -1 : @score || r.length, r]
         else
           [_t(@match.member?(v)),v]
         end
@@ -83,10 +93,37 @@ class StructureMatch
 
     private
     def _t(v)
-      v ? 1 : -1
+      v ? @score || 1 : -1
     end
   end
 
+  # StructureMatchers are initialized by passing in an example nested hash that maps out what
+  # StructureMatch should dig through, bind matching values, and how to score the matches it found.
+  # As an example:
+  #  StructureMatch.new("foo" => "bar",
+  #                     "numbermatch" => 5,
+  #                     "regexmatch" => {
+  #                       "__sm_leaf" => true,
+  #                       "op"=> "regex",
+  #                       "match" => "foo(bar)"},
+  #                     "ormatch" => {
+  #                       "__sm_leaf" => true,
+  #                       "op" => "or",
+  #                       "match" => [
+  #                         {
+  #                           "op" => ">",
+  #                           "match" => 7
+  #                         },
+  #                         {
+  #                           "op" => "<",
+  #                           "match" => 10}]})
+  # will create a matcher that perfectly matches the following JSON:
+  #  { "foo": "bar",
+  #    "numbermatch": 5,
+  #    "regexmatch": "foobar",
+  #    "ormatch": 8
+  #  }
+  # This match will be assigned a score of 5.
   def initialize(matcher)
     raise "#{matcher.inspect} must be a Hash" unless matcher.kind_of?(Hash)
     @matchers = Hash.new
@@ -108,6 +145,12 @@ class StructureMatch
     end
   end
 
+  # Takes a (possibly nested) hash that is a result of parsing JSON and matches what it can,
+  # assigning a score in the process.
+  #
+  # Returns a two-entry array in the form of [binds,score]:
+  # binds:: The nested hash corresponding to the matched values from val.
+  # score:: The score assigned to this match.
   def bind(val)
     raise "Must pass a Hash to StructureMatch.bind" unless val.kind_of?(Hash)
     score = 0
@@ -131,7 +174,7 @@ class StructureMatch
     [binds,score]
   end
 
-
+  # Runs bind on val and returns just the score component.
   def score(val)
     bind(val)[1]
   end
