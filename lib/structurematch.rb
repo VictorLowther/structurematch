@@ -66,9 +66,9 @@ class StructureMatch
     #       comparisons performed by member (which returns the set intersection of the arrays)
     def test(v=true)
       case @op
-      when "and" then [_t(@match.all?{|m|m.test(v)[0]}),v]
-      when "or" then [_t(@match.any?{|m|m.test(v)[0]}),v]
-      when "not" then [_t(!@match.test(v)[0]),v]
+      when "and" then [_t(@match.all?{|m|m.test(v)[0] > 0}),v]
+      when "or" then [_t(@match.any?{|m|m.test(v)[0] > 0}),v]
+      when "not" then [_t(@match.test(v)[0] < 0),v]
       when "range" then [_t(@match === v),v]
       when "regex"
         r = @match.match(v)
@@ -82,10 +82,10 @@ class StructureMatch
         end
       when "==" then [_t(@match == v),v]
       when "!=" then [_t(@match != v),v]
-      when ">" then [_t(@match > v),v]
-      when "<" then [_t(@match < v),v]
-      when ">=" then [_t(@match >= v),v]
-      when "<=" then [_t(@match <= v),v]
+      when ">" then [_t(v > @match),v]
+      when "<" then [_t(v < @match),v]
+      when ">=" then [_t(v >= @match),v]
+      when "<=" then [_t(v <= @match),v]
       else
         raise "Comparator cannot handle #{@op}"
       end
@@ -165,7 +165,7 @@ class StructureMatch
         binds[k] = res if offset > 0
       when v.kind_of?(StructureMatch)
         res,offset = v.bind(val[k])
-        binds[k] = v
+        binds[k] = res unless res.empty?
       else
         raise "StructureMatch.bind: No idea how to handle #{v.class.name}: #{v.inspect}"
       end
@@ -178,25 +178,25 @@ class StructureMatch
   # joined by sep.
   def flatbind(val, sep='.')
     binds,score = bind(val)
-    [_flatbind(binds,sep,Hash.new,""),score]
+    target = Hash.new
+    prefix = ''
+    _flatbind = lambda do |vals,p|
+      vals.each do |k,v|
+        key = p.empty? ? k : "#{p}#{sep}#{k.to_s}"
+        if v.kind_of?(Hash)
+          _flatbind.call(v,key)
+        else
+          target[key] = v
+        end
+      end
+    end
+    _flatbind.call(binds,"")
+    [target,score]
   end
 
   # Runs bind on val and returns just the score component.
   def score(val)
     bind(val)[1]
   end
-
-  private
-
-  def _flatbind(binds,sep,target,prefix)
-    binds.each do |k,v|
-      key = prefix.empty? ? k : "#{prefix}#{sep}#{k.to_s}"
-      if v.kind_of?(Hash)
-        _flatbind(v,sep,target,key)
-      else
-        target[key]=v
-      end
-    end
-  end
-
+  
 end
