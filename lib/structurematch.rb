@@ -46,7 +46,7 @@ class StructureMatch
       case @op
       when "and","or"
         raise "#{op.inspect} match key must be an array of submatches" unless @match.kind_of?(Array)
-        @match.map!{|m|Comparator.new(@match)}
+        @match.map!{|m|Comparator.new(m)}
       when "not"
         @match = Comparator.new(@match)
       when "range"
@@ -174,9 +174,29 @@ class StructureMatch
     [binds,score]
   end
 
+  # As bind, but transforms the nested hash into a flat hash with nested keys
+  # joined by sep.
+  def flatbind(val, sep='.')
+    binds,score = bind(val)
+    [_flatbind(binds,sep,Hash.new,""),score]
+  end
+
   # Runs bind on val and returns just the score component.
   def score(val)
     bind(val)[1]
+  end
+
+  private
+
+  def _flatbind(binds,sep,target,prefix)
+    binds.each do |k,v|
+      key = prefix.empty? ? k : "#{prefix}#{sep}#{k.to_s}"
+      if v.kind_of?(Hash)
+        _flatbind(v,sep,target,key)
+      else
+        target[key]=v
+      end
+    end
   end
 
 end
